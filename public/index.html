@@ -34,13 +34,14 @@
     <button class="stat" type="button" data-set='{}'><span class="k">Sites</span><span class="v" data-count="all">–</span></button>
     <button class="stat" type="button" data-set='{"stage":"pending"}'><span class="k">Pending</span><span class="v" data-count="pending">–</span></button>
     <button class="stat" type="button" data-set='{"stage":"staging"}'><span class="k">Staging only</span><span class="v" data-count="staging">–</span></button>
+    <button class="stat" type="button" data-set='{"stage":"ready"}'><span class="k">Ready</span><span class="v" data-count="ready">–</span></button>
     <button class="stat" type="button" data-set='{"stage":"live"}'><span class="k">Live</span><span class="v" data-count="live">–</span></button>
     <button class="stat" type="button" data-set='{"domain":"yes"}'><span class="k">Our domains</span><span class="v" data-count="ours">–</span></button>
     <button class="stat" type="button" data-set='{"seo":"yes"}'><span class="k">Need SEO / PPC</span><span class="v"><span class="pill pill-open" data-count="seo">–</span></span></button>
   </div>
 
   <h2>The sites</h2>
-  <p class="sub">Sites are grouped by stage: <strong>Pending</strong> is waiting to be staged, <strong>Staging only</strong> has an Astro staging build that is not live yet, and <strong>Live</strong> runs on Astro. Tap a name to see its addresses and change where it stands. Every change saves the moment you make it. A field nobody has filled in says <strong>not set</strong> rather than guessing.</p>
+  <p class="sub">Sites are grouped by stage: <strong>Pending</strong> is waiting to be staged, <strong>Staging only</strong> has an Astro staging build that is not live yet, <strong>Ready to go live</strong> passed its readiness check in the last week and has gate 12 approved, and <strong>Live</strong> runs on Astro. Tap a name to see its addresses and change where it stands. Every change saves the moment you make it. A field nobody has filled in says <strong>not set</strong> rather than guessing.</p>
 
   <div class="tools" id="tools">
     <label class="search">
@@ -50,7 +51,7 @@
     <div class="filters">
       <label class="fsel"><span class="flbl">Stage</span>
         <select id="f-stage">
-          <option value="">Any</option><option value="pending">Pending</option><option value="staging">Staging only</option><option value="live">Live</option>
+          <option value="">Any</option><option value="pending">Pending</option><option value="staging">Staging only</option><option value="ready">Ready to go live</option><option value="live">Live</option>
         </select>
       </label>
       <label class="fsel"><span class="flbl">Live on</span>
@@ -142,6 +143,12 @@
         <select name="domain_ours"><option value="">Not set</option><option value="1">Ours</option><option value="0">The client's</option></select></label>
       <label class="field"><span>SEO / PPC optimization</span>
         <select name="needs_seo_ppc"><option value="">Not set</option><option value="1">Needed</option><option value="0">Not needed</option></select></label>
+    </div>
+    <div class="edgrid">
+      <label class="field"><span>Gate 12 approved by</span>
+        <input name="approved_by" maxlength="120" autocomplete="off" placeholder="Paolo"></label>
+      <label class="field"><span>Gate 12 approved on</span>
+        <input name="approved_on" type="date"></label>
     </div>
     <label class="field"><span>Notes</span>
       <textarea name="notes" rows="3" maxlength="2000"></textarea></label>

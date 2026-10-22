@@ -9,7 +9,10 @@
 // Never a password or an API key, in any field: the desk is behind one
 // shared key. A service says where its login lives, not what it is.
 
-import { InvalidField, normalizeAddress, normalizeFlag, normalizeText } from './sites.js';
+import { InvalidField, normalizeAddress, normalizeDate, normalizeFlag, normalizeText } from './sites.js';
+
+// A date is cleaned as a site's are: YYYY-MM-DD, a day that exists.
+export { normalizeDate };
 
 // The kinds of service, in the order the page offers them. A new kind is a
 // line here; the database does not check the list, so it needs no migration.
@@ -132,16 +135,6 @@ export function profileUrl(label, domains) {
 export function normalizeHostname(raw) {
   const s = normalizeAddress(raw);
   if (s !== null && s.includes('/')) throw new Error('should be a domain without a path');
-  return s;
-}
-
-// YYYY-MM-DD, and a day that exists.
-export function normalizeDate(raw) {
-  const s = normalizeText(raw, 10);
-  if (s === null) return null;
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  if (!d || d.toISOString().slice(0, 10) !== s) throw new Error('should be a date like 2027-03-31');
   return s;
 }
 

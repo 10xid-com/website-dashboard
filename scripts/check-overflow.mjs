@@ -786,6 +786,101 @@ function goLiveStates(base, target) {
   return S;
 }
 
+// ---- ready to go live, answered with canned JSON ----
+// A readiness check reads the old site and staging, which a layout check
+// cannot set up either. So these states add a readiness summary, shaped as
+// src/readiness.js's readinessSummary() makes one, to one row of the real
+// GET /api/sites answer, and answer /api/sites/:id/readiness here. Nothing
+// reaches the Worker, so they write nothing. The paths are as long as a
+// WordPress permalink gets, and the details as long as the checks write.
+const RD_PATH = '/2019/07/kitchen-and-bathroom-renovations-custom-millwork-cabinetry-and-built-ins-across-the-greater-toronto-area-'
+  + 'and-the-golden-horseshoe-from-oakville-to-oshawa/';
+function rdChecks(ready) {
+  const fail = (id, label, detail, items) => ck(id, label, ready ? 'pass' : 'fail', ready ? 'Fine.' : detail, ready ? undefined : items);
+  return [
+    ck('addresses', 'Live and staging addresses', 'pass', `${GL_MAIN} goes live from ${GL_STAGING}.`),
+    ck('staging', 'Staging page', 'pass', `https://${GL_STAGING}/ answers with a page.`),
+    fail('canonical', 'Canonical address', `Staging's pages name ${GL_STAGING} as their canonical address. Set site: 'https://${GL_MAIN}' in the Astro config, or search engines will index ${GL_STAGING} instead of ${GL_MAIN}.`),
+    fail('old-addresses', 'Old addresses',
+      `214 of the old site's 1,986 addresses do not work on staging. Build each page, or give it a 301 to where it moved, or the links and search results that lead to it break.`,
+      [`${RD_PATH}: HTTP 404`, `${RD_PATH}?utm_source=newsletter&utm_campaign=autumn: HTTP 302 to ${RD_PATH}. Make it a 301, or search engines do not move its ranking.`,
+        '/services/: no answer: getaddrinfo ENOTFOUND ' + GL_STAGING, '…and 211 more']),
+    fail('contact', 'Contact form', `The form on staging's ${RD_PATH} posts to WordPress (https://${GL_MAIN}/wp-json/contact-form-7/v1/contact-forms/12345/feedback), which goes when the old site does. Point it at the site's own /api/contact (gate 11).`),
+    fail('tags', 'Google tags', 'Staging\'s home page does not load 2 Google tags it should, so the new site would go unmeasured. Add them to the layout.',
+      ['GTM-AB12CD3 (the old site loads it)', 'G-XY12345ABC (the desk lists it)']),
+    ck('sitemap', 'Sitemap', 'pass', 'Staging has a sitemap at /sitemap-index.xml.'),
+    ck('nameservers', 'DNS on Cloudflare', 'pass', `${GL_ZONE} uses Cloudflare's nameservers (ada.ns.cloudflare.com, bob.ns.cloudflare.com).`),
+    ck('noindex', 'Search engines', 'warn', 'Staging still tells search engines not to index it. That is right until just before going live; then delete the X-Robots-Tag block in public/_headers in '
+      + 'a-very-long-organisation-name-here/an-extremely-long-repository-name-for-a-client-website-2026, push, and wait for the build. Go live refuses until it is gone.', ['X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex']),
+    ck('approval', 'Approval (gate 12)', ready ? 'pass' : 'fail', ready ? `Approved by ${DETAILS.contacts[0].name} on 2026-10-21.`
+      : 'Nobody has recorded that gate 12 is approved. Add who approved it and on which day with Edit details.'),
+  ];
+}
+const RD = {
+  ready: () => ({ run: 'r', state: 'done', started_at: ago(4 * MINUTE), finished_at: ago(MINUTE), updated_at: ago(MINUTE),
+    counts: { sitemaps_left: 0, pages_found: 1986, pages_checked: 1986 }, checks: rdChecks(true), stale: null, ready: true }),
+  'not ready': () => ({ ...RD.ready(), checks: rdChecks(false), ready: false }),
+  old: () => ({ ...RD.ready(), finished_at: ago(9 * DAY), stale: 'old', ready: false }),
+  stalled: () => ({ ...RD.ready(), state: 'stalled', finished_at: null, updated_at: ago(9 * MINUTE), checks: rdChecks(true).slice(0, 4),
+    counts: { sitemaps_left: 0, pages_found: 1986, pages_checked: 480 }, ready: false }),
+  running: () => ({ ...RD.stalled(), state: 'running', updated_at: ago(0) }),
+};
+
+async function mockReadiness(page, target, summary, answers = {}) {
+  await page.route((u) => u.pathname === '/api/sites', async (route) => {
+    const res = await route.fetch();
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !Array.isArray(data.sites)) { await route.fulfill({ response: res }); return; }
+    data.sites = data.sites.map((s) => (s.id !== target.id ? s : {
+      ...s, live_domain: s.live_domain || GL_MAIN, staging_domain: s.staging_domain || GL_STAGING, astro_staging: true,
+      live_platform: s.live_platform === 'astro' ? 'wordpress' : s.live_platform, readiness: summary,
+    }));
+    await route.fulfill({ response: res, json: data });
+  });
+  await page.route((u) => /^\/api\/sites\/[0-9]+\/readiness/.test(u.pathname), async (route) => {
+    const req = route.request();
+    const answer = answers[`${req.method()} ${new URL(req.url()).pathname.split('/')[5] || ''}`.trim()];
+    if (answer === HOLD) return;
+    await route.fulfill(answer ? { json: answer() } : { status: 404, json: { error: 'No canned answer for this state.' } });
+  });
+}
+
+// The row's Ready to go live section in each state, every check opened,
+// and the list with the site in the Ready stage.
+function readinessStates(base, target) {
+  const S = [];
+  const card = (p) => p.locator(`.site[data-id="${target.id}"]`);
+  const open = async (p) => {
+    await gotoDesk(p, base, true);
+    await card(p).locator('.nm').click();
+    await detailsIn(card(p));
+    await settle(p);
+  };
+  for (const [name, make] of Object.entries(RD)) {
+    S.push([`readiness row: ${name}`, async (p) => {
+      await mockReadiness(p, target, make());
+      await open(p);
+      const all = card(p).locator('.rdall');
+      if (await all.count()) await all.locator('summary').click();
+    }]);
+  }
+  S.push(['readiness row: checking', async (p) => {
+    await mockReadiness(p, target, null, {
+      POST: () => ({ site: { ...target, readiness: RD.running() }, readiness: RD.running() }),
+      'POST next': HOLD,
+    });
+    await open(p);
+    await card(p).locator('[data-ready]').click();
+    await card(p).locator('[data-ready][disabled]').waitFor();
+  }]);
+  S.push(['list: a site ready to go live', async (p) => {
+    await mockReadiness(p, target, RD.ready());
+    await gotoDesk(p, base, true);
+    await p.locator('#st-ready').waitFor();
+  }]);
+  return S;
+}
+
 // The row the Go live states use: one that can go live (live and staging
 // addresses set), and of those the longest name.
 function goLiveTarget(sites) {
@@ -986,6 +1081,7 @@ function statesFor(base, sites, detailsTarget) {
     }]);
   }
   if (sites.length) S.push(...goLiveStates(base, goLiveTarget(sites)));
+  if (sites.length) S.push(...readinessStates(base, goLiveTarget(sites)));
   if (detailsTarget) S.push(...detailsStates(base, detailsTarget.site, detailsTarget.details));
   if (!LIVE) {
     // These two send writes, so they run against the local Worker only.

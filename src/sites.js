@@ -9,12 +9,12 @@ export const PLATFORMS = ['astro', 'wordpress', 'other', 'none'];
 // The yes/no questions. null is "not set" — shown as such, never as a no.
 export const FLAGS = ['astro_staging', 'domain_ours', 'needs_seo_ppc', 'chatgpt_approved'];
 
-const TEXT_LIMITS = { name: 120, environment: 80, notes: 2000 };
+const TEXT_LIMITS = { name: 120, environment: 80, notes: 2000, approved_by: 120 };
 const ADDRESS_LIMIT = 300;
 
 // Every field a person sets, in the order the table holds them (schema.js).
 export const COLUMNS = ['name', 'live_domain', 'staging_domain', 'github_repo', 'chat_url', 'environment',
-  'live_platform', ...FLAGS, 'notes', 'chatgpt_approval_ref', 'chatgpt_approval_sha'];
+  'live_platform', ...FLAGS, 'notes', 'chatgpt_approval_ref', 'chatgpt_approval_sha', 'approved_by', 'approved_on'];
 
 export class InvalidField extends Error {
   constructor(field, message) {
@@ -88,6 +88,16 @@ export function normalizeFlag(raw) {
   throw new Error('must be yes, no or not set');
 }
 
+// YYYY-MM-DD, and a day that exists.
+export function normalizeDate(raw) {
+  const s = normalizeText(raw, 10);
+  if (s === null) return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const d = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (!d || d.toISOString().slice(0, 10) !== s) throw new Error('should be a date like 2027-03-31');
+  return s;
+}
+
 export function normalizeText(raw, limit) {
   if (raw == null) return null;
   const s = String(raw).replace(/\r\n/g, '\n').trim();
@@ -102,6 +112,7 @@ const LABELS = {
   live_platform: 'Live platform', notes: 'Notes',
   astro_staging: 'Astro staging', domain_ours: 'Domain', needs_seo_ppc: 'SEO / PPC',
   chatgpt_approved: 'ChatGPT approval', chatgpt_approval_ref: 'Review link', chatgpt_approval_sha: 'Reviewed commit',
+  approved_by: 'Approved by', approved_on: 'Approved on',
 };
 
 // Cleans whichever fields are present in `input` and ignores everything else,
@@ -151,6 +162,9 @@ export function cleanSite(input, { creating = false } = {}) {
   if (out.chatgpt_approved === 1 && (!out.chatgpt_approval_ref || !out.chatgpt_approval_sha)) {
     throw new InvalidField('chatgpt_approved', 'Approval requires the reviewed commit and its GitHub link.');
   }
+  // Gate 12's approval: who gave it, and the day. Ready to go live needs the day.
+  run('approved_by', (v) => normalizeText(v, TEXT_LIMITS.approved_by)?.replace(/\s+/g, ' ') ?? null);
+  run('approved_on', normalizeDate);
 
   if ((creating || 'name' in input) && !out.name) {
     throw new InvalidField('name', 'Client name is required.');

@@ -86,11 +86,14 @@ h1{font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;
 .addbtn.ghost{color:var(--ink);background:transparent;border-color:var(--line-firm)}
 
 /* ---- status strip: counts that double as filters ---- */
-.status{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+.status{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
   gap:1px;background:var(--line);border:1px solid var(--line);
   border-radius:12px;overflow:hidden;margin-top:22px}
 /* A column, so a label that wraps to two lines pushes nothing: every number
    sits on the same baseline across the strip. */
+/* Seven tiles: on a phone the total takes a row of its own, so the six
+   below it fill two or three columns evenly. */
+@media (max-width:519px){.stat:first-child{grid-column:1/-1}}
 .stat{display:flex;flex-direction:column;justify-content:space-between;text-align:left;
   background:var(--card);padding:13px 15px;border:0;
   cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
@@ -364,6 +367,14 @@ a.addbtn{display:inline-block;text-decoration:none}
 .glnow+.glnow{margin-top:3px}
 .glnow[data-bad]{color:var(--bad);font-weight:600}
 .glbtns{flex-wrap:wrap;margin-top:9px}
+
+/* A row's Ready to go live section: what needs doing, then every check. */
+.rdlist{margin-top:8px}
+.rdall{margin-top:8px;min-width:0}
+.rdall>summary{display:inline-flex;align-items:center;min-height:32px;cursor:pointer;
+  font-size:13px;font-weight:600;color:var(--muted);touch-action:manipulation}
+.rdall>summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px}
+.rdall[open]>summary{margin-bottom:4px}
 
 .golive{width:min(680px,calc(100vw - 24px))}
 .golive h3:focus{outline:none}

@@ -15,6 +15,7 @@ For each site the desk shows, and lets anyone with the key change:
 | Live domain, staging domain, GitHub repo | Shown with Copy and Open buttons |
 | Chat | The Claude chat the site is built in: a claude.ai link, with Copy and Open |
 | Environment | The Claude Code environment that chat runs in, such as `backblaze/CF` |
+| Gate 12 approved by, and on | Who approved the site for going live (gate 12), and the day. *Ready to go live* needs the day. |
 | Notes | Free text |
 
 Any of these can also be **not set**. The desk says "not set" instead of guessing, so a missing answer shows up as work still to do.
@@ -25,6 +26,7 @@ The list is grouped by stage, worked out from those answers so there is nothing 
 | --- | --- |
 | **Pending** | In the queue to be staged: no Astro staging build yet. |
 | **Staging only** | An Astro staging build is up, but the live site is not on it yet. A staging domain counts unless *Astro staging* says No. |
+| **Ready to go live** | Staged, its last readiness check found nothing failing, that check is less than a week old and was for the addresses the site has now, and gate 12's approval is recorded. See [Ready to go live](#ready-to-go-live). |
 | **Live** | The live site runs on Astro. |
 
 The numbers at the top also work as filters. Tap **Pending** to see only those sites, and tap it again to see them all. The filters underneath answer the other questions, such as *WordPress sites with no Astro staging yet*.
@@ -47,7 +49,33 @@ Each site also keeps its details, each with Add, Edit and Remove:
 
 **A service's password goes in its Password box, and nowhere else.** It is encrypted before it is saved (AES-256-GCM, under the `CREDENTIALS_KEY` Worker secret), so the database, its backups and the Neon console hold only ciphertext. On the desk it shows as dots, with **Show** (for 30 seconds) and **Copy**. Everyone with the desk key can use them. The history says when a password was saved, changed or removed, never what it was, and no email ever contains one. Never put a password or API key in any other field: those are stored as typed.
 
+A staged site's row has **Check readiness**: the desk checks, from the outside, that the new site is ready to take the live domain. See [Ready to go live](#ready-to-go-live).
+
 A site's row can also **Go live**: point its live domain at its staging Worker. The desk checks everything first, saves today's DNS records so the switch can be rolled back, and asks you to confirm. See [Going live from the desk](#going-live-from-the-desk).
+
+## Ready to go live
+
+**Check readiness** on a row answers one question: is this site ready for its domain to be pointed at staging? It reads the old site and the staging site the way a visitor or a search engine does. It needs only the desk key, not the Cloudflare Access login, and it changes nothing anywhere. Go live still runs its own checks of Cloudflare before it switches (below).
+
+| Check | Fails when | Warns when |
+| --- | --- | --- |
+| Live and staging addresses | either is missing, they are the same, or staging is a path on a shared preview host | – |
+| Staging page | `https://<staging>/` does not answer 200 with HTML. The check stops there. | – |
+| Canonical address | staging's canonical link names a host other than the live domain | there is none |
+| Files from the old site | staging's home page loads `/wp-content/`, `/wp-includes/` or a file from the live domain | – |
+| Old addresses | an address in the old site's sitemap does not answer on staging, answers with a 302 or 307, or redirects to a page that does not answer. Each one is named. | no sitemap was found (it looks in robots.txt, then `/sitemap_index.xml`, `/wp-sitemap.xml`, `/sitemap.xml`), or the site has more than 2,000 addresses and only the first 2,000 were checked |
+| Contact form | the old site's contact page is missing on staging, or had a form that staging's has not, or staging's form posts to WordPress (`wp-json`, `admin-ajax` and the like) | the desk lists no Resend account for the site, or no contact page was found at all |
+| Google tags | staging's home page lacks a Tag Manager or Analytics id that the old site's home page loads, or that the site's services list | nobody loads or lists any tag |
+| Sitemap | staging has no `/sitemap-index.xml` or `/sitemap.xml`, or it lists addresses on another host | – |
+| DNS on Cloudflare | public DNS (dns.google) gives the live domain's zone nameservers that are not Cloudflare's (gate 6) | public DNS did not answer |
+| Search engines, robots.txt | – | staging still says noindex, or its robots.txt blocks every crawler. Both are right on staging until just before going live, and Go live refuses while either is there. |
+| Approval (gate 12) | *Gate 12 approved on* is not set. It is read from the site each time, so recording it after a check counts at once. | – |
+
+A site that is not live yet (*Live site runs on: Not live*) has no old site, so its old addresses, tags and contact page are not compared.
+
+**How a check runs.** Workers Free allows 50 calls a request, and an old site can have hundreds of pages. So a check runs in steps, one request each, and the page sends the next one when the last answers. The first step reads the two home pages, the robots.txt files, staging's sitemap and public DNS. The steps after it read the old site's sitemaps, three at a time, then open the old addresses on staging, twenty at a time. Each step stops while it still has calls left. Keep the tab open until it finishes. A check whose tab closes shows as stopped part-way two minutes after its last step; **Check again** starts over. A new check replaces the last one, and a step from the old one is refused.
+
+**When it counts.** A check counts for 7 days. After that, or once the live or staging address changes, the row says to check again and the site goes back to *Staging only*.
 
 ## The client form
 
@@ -80,6 +108,7 @@ Everything from one form is saved in one transaction: all of it, or, if anything
   | `site_tiktok`, `site_linkedin`, `site_facebook`, `site_x`, `site_instagram` | One table per social media platform: `handle`, `url` (the profile link, once per site), `account` and `notes`. They go when the site is deleted. A new platform needs a new table, so it is a new schema step plus one line in `src/details.js`. |
   | `history` | One row per field changed, and one per row added or removed. The database writes it itself, with a trigger, so no change can skip it. It is kept when the site is deleted. |
   | `golive`, `golive_log`, `golive_checks` | Going live: where each site's go-live stands, every step it took, and the last check. |
+  | `site_readiness` | The last readiness check, one row per site: its checks, its counts, and while it runs, the work still to do. A new check replaces it. It has no history trigger, since it can always be run again, and it goes when the site is deleted. |
   | `schema_migrations`, `desk_meta` | Which schema steps have run, and when the old data was copied in. |
 
 - **Ids** are numbers a person can read: `0001`, `0002`, `0003`, in the order rows were made, each table counting on its own (sites, services, contacts, domains, and each social media table). Past `9999` they carry on as `10000`. A number is never handed out twice, even after a delete. Each table has its own counter, a Postgres sequence named after it (`sites_number`, `site_services_number` and so on). Schema step 4 renumbered every row made before this, and moved everything that names them (a site's details, its go-live record and log, the history) along with it. History rows about a site deleted before that step keep that site's old id.
@@ -89,6 +118,7 @@ Everything from one form is saved in one transaction: all of it, or, if anything
 - **`src/secrets.js`** encrypts and decrypts service passwords with Web Crypto. **`src/notify.js`** writes the client form's emails and sends them through Resend's API.
 - **`src/client-form.js`** says what the client form may hold, and cleans it with the rules of `sites.js` and `details.js`, so a contact from the form is the same as one added on the desk.
 - **`src/store.js`** is every read and write the Worker makes.
+- **Ready to go live**: `src/readiness.js` holds the checks, the steps of a run and the summary that says whether a site is ready; `src/readiness-routes.js` answers `/api/sites/:id/readiness`. It reuses the page and DNS helpers of `src/golive.js`, and `npm test` runs whole checks against fake sites and public DNS.
 - **Going live**: `src/golive.js` holds the checks, the switch, the put-back and the live check; `src/golive-routes.js` answers `/api/golive/*`; `src/golive-store.js` is the SQL for the go-live tables. `src/cloudflare.js` is a small client for the Cloudflare API, `src/access.js` checks the Cloudflare Access login with Web Crypto (no library), and `src/budget.js` counts the calls each request makes. None of them needs the Workers runtime, so `npm test` runs whole switches and rollbacks under plain Node against a fake Cloudflare (`test/fake-cloudflare.js`) and a real Postgres running inside the test process (PGlite, `test/pglite.js`).
 - **The old Durable Object** (`DESK` binding, class `Desk`) held the list until September 2026. The first time the new Worker reached Neon, it copied the object's four tables across in one transaction, keeping every id, time and log number, and recorded that in `desk_meta`. The object now only hands over its data. Its data is left as it was, so the previous Worker version can still be rolled back to. It will be deleted in a later release.
 - **The page** is plain HTML, CSS and JS in `public/`, with no framework and no build step.
@@ -118,7 +148,7 @@ npm run check:overflow     # exits 1 on any sideways scroll or spill
 npm run check              # unit tests, then the layout check
 ```
 
-This starts the real Worker with a throwaway database and fills it with awkward content: an unbroken 90-character name, a 100-character domain, a long staging path and repo, and notes that are one pasted URL. It opens every screen state: locked, the list, each row opened, no results, the longest filter labels, the add and edit dialogs, an edit error, an edit conflict, an armed delete, and the 404 page. It also opens every Go live step (sign in, not set up, not allowed, checks that fail and checks that pass, switching, a switch that worked and one that failed, Roll back with the old-host acknowledgement, rolled back) and the row's Go live section while checking, live, stopped part-way and failed, answering `/api/golive/*` with canned JSON through Playwright so nothing is written. It measures each state at 320, 360, 390, 402, 430, 768, 1024, 1440 and 3440px wide. Up to 430px it measures as a phone (touch, a coarse pointer, the viewport tag honoured).
+This starts the real Worker with a throwaway database and fills it with awkward content: an unbroken 90-character name, a 100-character domain, a long staging path and repo, and notes that are one pasted URL. It opens every screen state: locked, the list, each row opened, no results, the longest filter labels, the add and edit dialogs, an edit error, an edit conflict, an armed delete, and the 404 page. It opens the row's Ready to go live section in each state (not checked, checking, stopped part-way, ready, not ready with every check opened, a week old), and the list with a site in the Ready stage, answering `/api/sites/:id/readiness` with canned JSON. It also opens every Go live step (sign in, not set up, not allowed, checks that fail and checks that pass, switching, a switch that worked and one that failed, Roll back with the old-host acknowledgement, rolled back) and the row's Go live section while checking, live, stopped part-way and failed, answering `/api/golive/*` with canned JSON through Playwright so nothing is written. It measures each state at 320, 360, 390, 402, 430, 768, 1024, 1440 and 3440px wide. Up to 430px it measures as a phone (touch, a coarse pointer, the viewport tag honoured).
 
 It fails if the page is wider than the window, or if any element's content spills out of its own box. When it fails, it names the element. Text cut short with an ellipsis on purpose is listed but does not fail, because the full text is shown elsewhere on the page. The check also fails if the web fonts did not load, because fallback fonts have different widths. Set `ALLOW_FALLBACK_FONTS=1` to measure anyway.
 
@@ -314,6 +344,9 @@ Scripts send `Authorization: Bearer <DASH_KEY>` with every request. The page use
 | PATCH | `/api/sites/:id/:kind/:itemId` | only the fields to change, optionally `expected_updated_at` | `{ item }`, or `409 { code: "conflict", item }` if it changed since that time |
 | DELETE | `/api/sites/:id/:kind/:itemId` | – | `{ deleted: itemId }` |
 | POST | `/api/sites/:id/services/:itemId/password` | – | `{ password }`, decrypted, for Show and Copy; `404 { code: "no-password" }` if none is saved |
+| GET | `/api/sites/:id/readiness` | – | `{ readiness }`, as each site in `/api/sites` carries it (below) |
+| POST | `/api/sites/:id/readiness` | – | `{ site, readiness }`: a new check, after its first step. It replaces the last one. |
+| POST | `/api/sites/:id/readiness/next` | `{ run }` | `{ site, readiness }`: the next step of that check. Send it again while `state` is `running`. A finished check answers as it stands; `409 { code: "run-replaced" }` if a newer check has started. |
 
 | GET | `/api/client-form` | – | `{ choices }`: the service kinds, job ticks, options and row limits the form offers |
 | POST | `/api/client-form` | the form (below) | `201 { site, emails: [{ who: "rep" \| "client", sent, error? }] }`; `400 { error, field }`, the field named as a path such as `delegates.1.email` or `jobs.0.url` |
@@ -333,6 +366,8 @@ Field values:
 - `astro_staging`, `domain_ours` and `needs_seo_ppc`: `true`, `false` or `null`.
 - `chat_url`: a `claude.ai` link (`claude.ai/code/session_…` is fine; it is stored with `https://`), or `null`. Links anywhere else are refused.
 - `environment`: one line of up to 80 characters, or `null`.
+- `approved_by`: one line of up to 120 characters, or `null`. `approved_on`: `YYYY-MM-DD`, or `null`.
+- `readiness` (read only): the last readiness check. `state` is `none` (never checked), `running`, `stalled` (no step for two minutes) or `done`; `run` names the check for `/next`; `counts` is `{ sitemaps_left, pages_found, pages_checked }`; `checks` is `[{ id, label, status, detail, items? }]` with `status` `pass`, `warn` or `fail`, the approval included once it is done; `stale` is `null`, `old` (more than 7 days) or `addresses` (the live or staging address changed since); and `ready` is what puts the site in *Ready to go live*.
 - `golive` (read only): where the site's go-live stands, or `null` if it never went live from the desk. It says whether there was an error (`has_error`) and what kind (`error_kind`), never its words: those can quote a saved record, so only `/api/golive/:id`, behind Access, has them.
 - A service: `kind` (required; one of `godaddy`, `cloudflare`, `cloudflare_worker`, `cloudflare_zone`, `backblaze_bucket`, `database`, `gtm`, `ga4`, `search_console`, `google_ads`, `business_profile`, `recaptcha`, `resend`, `calcom`, `stripe`, `wordpress`, `hosting`, `other`), `identifier`, `url` (an http or https link), `account`, `notes`, and `password` (write-only: text saves it encrypted, `null` or `""` removes it, absent leaves it). A service comes back with `has_password`, never the password. Saving a password with no `CREDENTIALS_KEY` answers `503 { code: "passwords-not-set-up" }`.
 - A contact: `name` (required), `role`, `email`, `phone` and `notes`.

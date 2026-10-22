@@ -492,12 +492,12 @@ export async function doh(fetchImpl, resolver, name, type) {
 // --- Fetching pages ---
 
 const isHtml = (res) => /^text\/html\b/i.test(res.headers.get('content-type') || '');
-const anyBody = () => true;
-const noBody = () => false;
+export const anyBody = () => true;
+export const noBody = () => false;
 
 // A page as the checks need it. `wanted` says whether a 200's body is worth
 // reading. Never throws: a page that cannot be had is { error }.
-async function getPage(fetchImpl, url, wanted = isHtml) {
+export async function getPage(fetchImpl, url, wanted = isHtml) {
   try {
     const res = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
     const read = res.status === 200 && wanted(res);
@@ -511,21 +511,21 @@ async function getPage(fetchImpl, url, wanted = isHtml) {
 }
 
 // "HTTP 302 to https://…", "no answer: getaddrinfo ENOTFOUND …".
-function answerText(p) {
+export function answerText(p) {
   if (p.error) return 'no answer: ' + (p.error.cause?.message || p.error.message);
   if (p.location && p.status >= 300 && p.status < 400) return `HTTP ${p.status} to ${p.location}`;
   if (p.status === 200 && typeof p.body !== 'string') return `HTTP 200 with ${p.type || 'no content type'}`;
   return 'HTTP ' + p.status;
 }
 
-const hasPage = (p) => !p.error && p.status === 200 && typeof p.body === 'string';
+export const hasPage = (p) => !p.error && p.status === 200 && typeof p.body === 'string';
 
 // --- The plan (§6.3) ---
 
 // Letters, digits, hyphens and dots, at least two labels, nothing else.
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
-function addressesCheck(live, staging, deskHost) {
+export function addressesCheck(live, staging, deskHost) {
   const label = 'Live and staging addresses';
   const problems = [];
   if (!live) problems.push('The live domain is not set.');

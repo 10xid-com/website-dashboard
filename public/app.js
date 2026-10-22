@@ -32,17 +32,23 @@ const FILTER_KEYS = ['stage', 'platform', 'staging', 'domain', 'seo'];
 
 // Where a site is on its way to Astro, worked out from its answers so there
 // is nothing more to keep up to date. Live: the live site runs on Astro.
-// Staging only: an Astro staging build is up, but the live site is not on it
-// yet (a staging address counts unless "Astro staging" says no). Pending:
-// everything else, waiting in the queue to be staged.
+// Ready to go live: staged, and the Worker says its last readiness check
+// passed, is under a week old and gate 12's approval is recorded (see
+// readinessSummary in src/readiness.js). Staging only: an Astro staging build
+// is up, but the live site is not on it yet (a staging address counts unless
+// "Astro staging" says no). Pending: everything else, waiting in the queue to
+// be staged.
 const STAGES = {
   pending: { title: 'Pending', about: 'Waiting to be staged: no Astro staging build yet.' },
   staging: { title: 'Staging only', about: 'An Astro staging build is up; the live site is not on it yet.' },
+  ready: { title: 'Ready to go live', about: 'Checked in the last week with nothing failing, and gate 12 approved.' },
   live: { title: 'Live', about: 'The live site runs on Astro.' },
 };
 function stageOf(s) {
   if (s.live_platform === 'astro') return 'live';
-  if (s.astro_staging === true || (s.astro_staging !== false && s.staging_domain)) return 'staging';
+  if (s.astro_staging === true || (s.astro_staging !== false && s.staging_domain)) {
+    return s.readiness && s.readiness.ready ? 'ready' : 'staging';
+  }
   return 'pending';
 }
 
@@ -254,6 +260,7 @@ function cardHtml(s, open) {
       <p class="sect">Where it stands</p>
       <div class="ctrls">${ctrls}</div>
     </div>
+    ${rdRowHtml(s)}
     ${glRowHtml(s)}
     ${s.notes ? `<div><p class="sect">Notes</p><p class="notes">${esc(s.notes)}</p></div>` : ''}
     ${window.deskDetails ? window.deskDetails.html(s, open) : ''}
@@ -325,6 +332,7 @@ function renderStats() {
     all: sites.length,
     pending: count((s) => stageOf(s) === 'pending'),
     staging: count((s) => stageOf(s) === 'staging'),
+    ready: count((s) => stageOf(s) === 'ready'),
     live: count((s) => stageOf(s) === 'live'),
     ours: count((s) => s.domain_ours === true),
     seo: count((s) => s.needs_seo_ppc === true),
@@ -365,7 +373,7 @@ function renderGrid(keepOpen) {
     grid.innerHTML = Object.entries(STAGES).map(([key, st]) => {
       const inStage = list.filter((s) => stageOf(s) === key);
       // With a filter set, a stage with nothing in it is left out; with none
-      // set, all three show, so an empty one reads as news too.
+      // set, all four show, so an empty one reads as news too.
       if (!inStage.length && anyFilter()) return '';
       const hid = 'st-' + key;
       return `<section class="stage" aria-labelledby="${hid}">
@@ -787,6 +795,102 @@ function glRowHtml(s) {
     </div>`;
 }
 
+// ---- ready to go live ----
+// A readiness check reads the old site and staging from the outside, a step
+// per request, so a big old site never needs more calls than one request
+// allows (src/readiness.js). This page drives the steps and draws the row
+// after each one; the Worker decides what counts as ready, and the list's
+// stage comes from its answer.
+const rd = new Map();   // site id -> { busy, err } while this tab checks it
+
+// The row's "Ready to go live" section: what the last check found, and the
+// button that runs another.
+function rdRowHtml(s) {
+  if (s.live_platform === 'astro') return '';   // live already: nothing left to get ready
+  const r = s.readiness || { state: 'none', checks: [] };
+  const job = rd.get(s.id) || {};
+  const checks = Array.isArray(r.checks) ? r.checks : [];
+  const fails = checks.filter((c) => c.status === 'fail');
+  const warns = checks.filter((c) => c.status === 'warn');
+  const n = r.counts || {};
+  const lines = [];   // [text, bad]
+  const need = [!s.live_domain && 'a live domain', !s.staging_domain && 'a staging domain'].filter(Boolean);
+  if (job.busy) {
+    lines.push([!n.pages_found || n.sitemaps_left
+      ? "Checking… reading staging and the old site's sitemaps."
+      : `Checking… ${n.pages_checked || 0} of ${plural(n.pages_found, 'old address', 'old addresses')} done. Keep this tab open until it finishes.`]);
+  } else if (r.state === 'none') {
+    lines.push([need.length
+      ? `Checking needs ${listed(need)}. Add ${need.length > 1 ? 'them' : 'it'} with Edit details.`
+      : "Not checked yet. The desk opens every page in the old site's sitemap on staging, and checks the canonical address, the contact form, the Google tags, the sitemap and DNS. It changes nothing."]);
+  } else if (r.state === 'running') {
+    lines.push([`Someone is checking this site now (${n.pages_checked || 0} of ${plural(n.pages_found || 0, 'old address', 'old addresses')} done).`]);
+  } else if (r.state === 'stalled') {
+    lines.push([`The last check stopped part-way ${whenAt(r.updated_at)}: its tab was closed. Check again.`, true]);
+  } else if (r.stale === 'addresses') {
+    lines.push(['The live or staging address has changed since the last check. Check again.', true]);
+  } else if (r.stale === 'old') {
+    lines.push([`Last checked ${whenAt(r.finished_at)}, more than a week ago. Check again: the site may have changed since.`, true]);
+  } else if (r.ready) {
+    lines.push([`Ready to go live. Checked ${whenAt(r.finished_at)}: nothing fails` +
+      (warns.length ? `, but read the ${plural(warns.length, 'warning')} first.` : '.')]);
+  } else {
+    lines.push([`Not ready: ${plural(fails.length, 'check')} ${fails.length === 1 ? 'fails' : 'fail'} (checked ${whenAt(r.finished_at)}).`, true]);
+  }
+  if (job.err) lines.push([job.err, true]);
+
+  // What needs doing comes first; every check is a tap away.
+  const shown = r.state === 'done' && !job.busy ? [...fails, ...warns] : [];
+  const all = r.state === 'done' && !job.busy && checks.length
+    ? `<details class="rdall"><summary>All ${plural(checks.length, 'check')}</summary>${checkList(checks)}</details>` : '';
+  const word = r.state === 'none' ? 'Check readiness' : 'Check again';
+  const btn = need.length ? '' : `<div class="btns glbtns"><button class="btn" type="button" data-ready${job.busy ? ' disabled' : ''}>${
+    job.busy ? 'Checking…' : word}<span class="sr"> ${esc(s.name)}</span></button></div>`;
+  return `<div class="rdrow"><p class="sect">Ready to go live</p>
+      ${lines.map(([t, bad]) => `<p class="glnow"${bad ? ' data-bad' : ''}>${esc(t)}</p>`).join('')}
+      ${shown.length ? `<div class="rdlist">${checkList(shown)}</div>` : ''}${all}${btn}
+    </div>`;
+}
+
+// Replaces the row with the one an answer carries and redraws it where it
+// stands, keeping the focus on the button if it was there. The row moves to
+// its new stage at the next redraw of the list, as any change made in a row
+// does.
+function rdApply(site) {
+  const i = site && site.id ? sites.findIndex((x) => x.id === site.id) : -1;
+  if (i === -1) return;
+  const card = grid.querySelector(`.site[data-id="${CSS.escape(site.id)}"]`);
+  const focused = !!card && card.contains(document.activeElement) && document.activeElement.matches('[data-ready]');
+  if (!('golive' in site)) site.golive = sites[i].golive;
+  sites[i] = site;
+  redrawCard(site.id, focused ? '[data-ready]' : undefined);
+}
+const rdPaint = (id) => { const s = byId(id); if (s) rdApply(s); };
+
+async function rdRun(id) {
+  if ((rd.get(id) || {}).busy) return;
+  const job = { busy: true, err: null };
+  rd.set(id, job);
+  rdPaint(id);
+  const path = '/api/sites/' + encodeURIComponent(id) + '/readiness';
+  try {
+    let r = await api('POST', path);
+    rdApply(r.site);
+    while (r.readiness && r.readiness.state === 'running') {
+      if (!byId(id)) break;   // deleted meanwhile
+      r = await api('POST', path + '/next', { run: r.readiness.run });
+      rdApply(r.site);
+    }
+  } catch (e) {
+    if (e instanceof Locked) { rd.delete(id); lock(e); return; }
+    job.err = e.code === 'run-replaced' ? e.message : 'The check stopped: ' + e.message + ' Check again to start over.';
+    if (e.site) rdApply(e.site);
+  }
+  job.busy = false;
+  if (!job.err) rd.delete(id);
+  rdPaint(id);
+}
+
 // ---- the go-live calls ----
 // Cloudflare Access stands in front of /api/golive, so an answer can be its
 // own rather than the desk's: a redirect to its login page (seen here as an
@@ -843,6 +947,7 @@ function glApplySite(site) {
   const i = site && site.id ? sites.findIndex((s) => s.id === site.id) : -1;
   if (i === -1) return;
   if (!('golive' in site)) site.golive = sites[i].golive;
+  if (!('readiness' in site)) site.readiness = sites[i].readiness;
   sites[i] = site;
   redrawCard(site.id);
 }
@@ -1510,6 +1615,7 @@ document.addEventListener('click', (e) => {
   if (t.closest('.btn.edit')) { openEditor(byId(id)); return; }
   const g = t.closest('[data-golive]');
   if (g) { glOpen(id, g.dataset.golive, g); return; }
+  if (t.closest('[data-ready]')) { rdRun(id); return; }
   const d = t.closest('.btn.del');
   if (d) { del(d, id); }
 });

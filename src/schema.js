@@ -302,6 +302,31 @@ export const MIGRATIONS = [
     )`,
     'CREATE INDEX service_passwords_site ON service_passwords (site_id)',
   ],
+
+  // 7. Ready to go live (readiness.js). Who approved the site for going live
+  // (gate 12) and on which day: on the site itself, so the history records
+  // them like any other field. And the last readiness check, one row per
+  // site, replaced by the next check. It is worked out from the outside and
+  // can always be run again, so it has no history trigger.
+  [
+    `ALTER TABLE sites
+      ADD COLUMN approved_by TEXT,
+      ADD COLUMN approved_on TEXT CHECK (approved_on ~ '^\\d{4}-\\d{2}-\\d{2}$')`,
+    `CREATE TABLE site_readiness (
+      site_id      TEXT PRIMARY KEY REFERENCES sites (id) ON DELETE CASCADE ON UPDATE CASCADE,
+      run          TEXT NOT NULL,     -- this check's own id; a step for any other run is refused
+      step         INTEGER NOT NULL,  -- how many steps have been saved, so two tabs never save the same one twice
+      state        TEXT NOT NULL CHECK (state IN ('running','done')),
+      live_host    TEXT,
+      staging_host TEXT,
+      checks       TEXT NOT NULL,     -- JSON [{id, label, status, detail, items}]
+      counts       TEXT NOT NULL,     -- JSON {sitemaps_left, pages_found, pages_checked}: what the list shows while it runs
+      progress     TEXT,              -- JSON: the work still to do; null once done
+      started_at   TEXT NOT NULL,
+      finished_at  TEXT,
+      updated_at   TEXT NOT NULL
+    )`,
+  ],
 ];
 
 // Brings the database up to the last step (or to `upTo`, for a test that

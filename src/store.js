@@ -12,6 +12,7 @@ import { toJson, COLUMNS } from './sites.js';
 import { ITEMS, itemJson } from './details.js';
 import { OPTIONS } from './client-form.js';
 import * as golive from './golive-store.js';
+import { readinessSummary } from './readiness.js';
 
 const HISTORY_LIMIT = 200;
 
@@ -33,17 +34,22 @@ export class Store {
   }
 
   // Each site carries where its go-live stands (null when it never went
-  // live from the desk), so the list can show it without asking again.
+  // live from the desk) and its readiness, so the list can show both without
+  // asking again.
   list() {
     return this.#read(async (tx) => {
       const summaries = await golive.goliveSummaries(tx);
+      const checked = new Map((await tx.rows(`SELECT ${READINESS_COLUMNS} FROM site_readiness`)).map((r) => [r.site_id, readinessJson(r)]));
       const rows = await tx.rows('SELECT * FROM sites ORDER BY lower(name), name, id');
-      return rows.map((row) => ({ ...toJson(row), golive: summaries.get(row.id) ?? null }));
+      return rows.map((row) => {
+        const site = { ...toJson(row), golive: summaries.get(row.id) ?? null };
+        return { ...site, readiness: readinessSummary(site, checked.get(row.id) ?? null) };
+      });
     });
   }
 
   read(id) {
-    return this.#read((tx) => golive.siteWithGolive(tx, id));
+    return this.#read((tx) => siteOf(tx, id));
   }
 
   create(fields) {
@@ -56,7 +62,7 @@ export class Store {
          VALUES (?, ${COLUMNS.map(() => '?').join(', ')}, ?, ?)`,
         id, ...values, now, now
       );
-      return golive.siteWithGolive(tx, id);
+      return siteOf(tx, id);
     });
   }
 
@@ -66,7 +72,7 @@ export class Store {
   // between them.
   update(id, fields, expected) {
     return this.#write(async (tx) => {
-      const current = await golive.siteWithGolive(tx, id);
+      const current = await siteOf(tx, id);
       if (!current) return { missing: true };
       if (expected && current.updated_at !== expected) return { conflict: true, site: current };
       const keys = Object.keys(fields).filter((k) => COLUMNS.includes(k));
@@ -75,7 +81,7 @@ export class Store {
         `UPDATE sites SET ${keys.map((k) => k + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`,
         ...keys.map((k) => fields[k]), new Date().toISOString(), id
       );
-      return { site: await golive.siteWithGolive(tx, id) };
+      return { site: await siteOf(tx, id) };
     });
   }
 
@@ -235,7 +241,61 @@ export class Store {
          VALUES (?, ?, ${keys.map(() => '?').join(', ')}, ?, ?)`,
         await nextId(tx, 'client_forms'), id, ...keys.map((k) => form.options[k] ? 1 : 0), now, now
       );
-      return { site: await golive.siteWithGolive(tx, id) };
+      return { site: await siteOf(tx, id) };
+    });
+  }
+
+  // Ready to go live (readiness.js). The site's services, for the tags it
+  // should load and the account that sends its form.
+  servicesOf(siteId) {
+    return this.#read((tx) => tx.rows('SELECT kind, identifier FROM site_services WHERE site_id = ? ORDER BY id', siteId));
+  }
+
+  // The site's check as it is saved, with the work still to do. null when
+  // it was never checked.
+  readinessRun(siteId) {
+    return this.#read(async (tx) => {
+      const row = await tx.row(`SELECT ${READINESS_COLUMNS}, progress FROM site_readiness WHERE site_id = ?`, siteId);
+      return row && { ...readinessJson(row), progress: value(row.progress) };
+    });
+  }
+
+  // A new check, in place of the last one, whatever state that was in: a
+  // run whose tab has gone has nobody to finish it. → { site } · { missing: true }.
+  readinessStart(siteId, { run, state, checks, progress, counts, live_host, staging_host }) {
+    return this.#write(async (tx) => {
+      if (!(await tx.row('SELECT id FROM sites WHERE id = ?', siteId))) return { missing: true };
+      const now = new Date().toISOString();
+      await tx.run('DELETE FROM site_readiness WHERE site_id = ?', siteId);
+      await tx.run(
+        `INSERT INTO site_readiness (site_id, run, step, state, live_host, staging_host, checks, counts, progress, started_at, finished_at, updated_at)
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        siteId, run, state, live_host, staging_host, JSON.stringify(checks), JSON.stringify(counts),
+        progress ? JSON.stringify(progress) : null, now, state === 'done' ? now : null, now
+      );
+      return { site: await siteOf(tx, siteId) };
+    });
+  }
+
+  // The next step of run `run`, saved only if `step` is still the last one
+  // saved: two tabs driving the same run each do the step, and only the
+  // first is kept. → { site } · { replaced: true, site } when another check
+  // has started since (or the site's check is gone) · { missing: true }.
+  readinessStep(siteId, { run, step, state, checks, progress, counts }) {
+    return this.#write(async (tx) => {
+      const site = await siteOf(tx, siteId);
+      if (!site) return { missing: true };
+      const row = await tx.row('SELECT run, step, state FROM site_readiness WHERE site_id = ?', siteId);
+      if (!row || row.run !== run) return { replaced: true, site };
+      if (row.step !== step || row.state === 'done') return { site };
+      const now = new Date().toISOString();
+      await tx.run(
+        `UPDATE site_readiness SET step = ?, state = ?, checks = ?, counts = ?, progress = ?, finished_at = ?, updated_at = ?
+         WHERE site_id = ?`,
+        step + 1, state, JSON.stringify(checks), JSON.stringify(counts), progress && state !== 'done' ? JSON.stringify(progress) : null,
+        state === 'done' ? now : null, now, siteId
+      );
+      return { site: await siteOf(tx, siteId) };
     });
   }
 
@@ -287,6 +347,29 @@ export class Store {
       return counts;
     });
   }
+}
+
+// A site as the page gets it: its go-live summary and its readiness. null
+// when there is no site.
+async function siteOf(tx, id) {
+  const site = await golive.siteWithGolive(tx, id);
+  if (!site) return null;
+  const row = await tx.row(`SELECT ${READINESS_COLUMNS} FROM site_readiness WHERE site_id = ?`, id);
+  return { ...site, readiness: readinessSummary(site, row && readinessJson(row)) };
+}
+
+// Everything of a readiness row but the work still to do, which only the
+// next step needs and which can be long.
+const READINESS_COLUMNS = 'site_id, run, step, state, live_host, staging_host, checks, counts, started_at, finished_at, updated_at';
+
+// JSON that does not parse is read as nothing, so one bad row cannot take
+// the list down with it.
+function value(text) {
+  try { return text == null ? null : JSON.parse(text); } catch { return null; }
+}
+
+function readinessJson(row) {
+  return { ...row, checks: value(row.checks) ?? [], counts: value(row.counts) ?? {} };
 }
 
 // The next id for a row of `table`: 0001, 0002 … 9999, 10000, from the

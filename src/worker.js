@@ -23,6 +23,7 @@ import { pgSession } from './db.js';
 import { migrate } from './schema.js';
 import { Store } from './store.js';
 import { handleGoLive, handleGoLiveSignin } from './golive-routes.js';
+import { handleReadiness } from './readiness-routes.js';
 
 // The old home of the list. It no longer takes writes: all it does is hand
 // over its tables, once, for the copy into Postgres. Its data stays where it
@@ -209,6 +210,7 @@ function expectedFrom(body) {
 //   POST   /api/sites/:id/:kind          add a service, contact, domain or social link
 //   PATCH  /api/sites/:id/:kind/:itemId  change one
 //   DELETE /api/sites/:id/:kind/:itemId  remove one
+// and /api/sites/:id/readiness, whether it is ready to go live (readiness-routes.js).
 async function handleSites(request, db, parts, env) {
   if (parts[2] !== 'sites' || parts.length > 7) return json({ error: 'Not found.' }, 404);
   const [id, kind, itemId, extra] = parts.slice(3);
@@ -223,6 +225,7 @@ async function handleSites(request, db, parts, env) {
       return details ? json({ ...details, choices: CHOICES }) : notFound();
     }
     if (extra) return await handlePassword(request, db, m, id, itemId, env);
+    if (kind === 'readiness') return await handleReadiness(request, { store: db, siteId: id, action: itemId });
     if (kind) return await handleItem(request, db, m, id, kind, itemId, env);
 
     if (!id && m === 'GET') return json({ sites: await db.list() });

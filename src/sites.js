@@ -7,14 +7,14 @@
 export const PLATFORMS = ['astro', 'wordpress', 'other', 'none'];
 
 // The yes/no questions. null is "not set" — shown as such, never as a no.
-export const FLAGS = ['astro_staging', 'domain_ours', 'needs_seo_ppc'];
+export const FLAGS = ['astro_staging', 'domain_ours', 'needs_seo_ppc', 'chatgpt_approved'];
 
 const TEXT_LIMITS = { name: 120, environment: 80, notes: 2000 };
 const ADDRESS_LIMIT = 300;
 
 // Every field a person sets, in the order the table holds them (schema.js).
 export const COLUMNS = ['name', 'live_domain', 'staging_domain', 'github_repo', 'chat_url', 'environment',
-  'live_platform', ...FLAGS, 'notes'];
+  'live_platform', ...FLAGS, 'notes', 'chatgpt_approval_ref', 'chatgpt_approval_sha'];
 
 export class InvalidField extends Error {
   constructor(field, message) {
@@ -101,6 +101,7 @@ const LABELS = {
   github_repo: 'GitHub repo', chat_url: 'Chat link', environment: 'Environment',
   live_platform: 'Live platform', notes: 'Notes',
   astro_staging: 'Astro staging', domain_ours: 'Domain', needs_seo_ppc: 'SEO / PPC',
+  chatgpt_approved: 'ChatGPT approval', chatgpt_approval_ref: 'Review link', chatgpt_approval_sha: 'Reviewed commit',
 };
 
 // Cleans whichever fields are present in `input` and ignores everything else,
@@ -131,6 +132,25 @@ export function cleanSite(input, { creating = false } = {}) {
     return v;
   });
   FLAGS.forEach((f) => run(f, normalizeFlag));
+  run('chatgpt_approval_ref', (v) => {
+    const s = normalizeText(v, 500);
+    if (!s) return null;
+    const url = new URL(s);
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.port ||
+        !/^\/[^/]+\/[^/]+\/(pull\/\d+|commit\/[a-f0-9]{40,64})\/?$/i.test(url.pathname)) {
+      throw new Error('must be a GitHub pull request or commit link');
+    }
+    if (url.search || url.hash) throw new Error('must not contain a query or fragment');
+    return url.href;
+  });
+  run('chatgpt_approval_sha', (v) => {
+    const s = normalizeText(v, 64);
+    if (s && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(s)) throw new Error('must be a full commit SHA');
+    return s?.toLowerCase() ?? null;
+  });
+  if (out.chatgpt_approved === 1 && (!out.chatgpt_approval_ref || !out.chatgpt_approval_sha)) {
+    throw new InvalidField('chatgpt_approved', 'Approval requires the reviewed commit and its GitHub link.');
+  }
 
   if ((creating || 'name' in input) && !out.name) {
     throw new InvalidField('name', 'Client name is required.');

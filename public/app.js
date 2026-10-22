@@ -164,7 +164,12 @@ function flagPills(s) {
   return Object.entries(FLAGS).map(([field, f]) => {
     const st = flagState(s[field]);
     const cls = st === 'yes' ? f.yesCls : st === 'no' ? f.noCls : 'f-unset';
-    return `<li class="flag ${cls}">${esc(f[st])}</li>`;
+    const approval = field === 'needs_seo_ppc'
+      ? `<li class="flag ${s.chatgpt_approved === true ? 'f-approved' : 'f-unset'}" title="${s.chatgpt_approved === true
+        ? 'Reviewed and ready for your deployment. Approval applies to the linked commit only.'
+        : 'No approved revision is ready for deployment yet.'}">${s.chatgpt_approved === true ? 'ChatGPT approved' : 'Awaiting ChatGPT review'}</li>`
+      : '';
+    return `<li class="flag ${cls}">${esc(f[st])}</li>` + approval;
   }).join('');
 }
 
@@ -254,6 +259,12 @@ function cardHtml(s, open) {
       <p class="sect">Where it stands</p>
       <div class="ctrls">${ctrls}</div>
     </div>
+    ${s.chatgpt_approved === true ? `<div class="review-ready"><p class="sect">Ready for your deployment</p>
+      <p>ChatGPT approved ${esc(when(s.chatgpt_approved_at))}. Deploy the reviewed commit below.</p>
+      <dl class="addr">
+        ${addrRow('Review', s.chatgpt_approval_ref, s.chatgpt_approval_ref, s.name)}
+        ${textRow('Commit', s.chatgpt_approval_sha)}
+      </dl></div>` : ''}
     ${glRowHtml(s)}
     ${s.notes ? `<div><p class="sect">Notes</p><p class="notes">${esc(s.notes)}</p></div>` : ''}
     ${window.deskDetails ? window.deskDetails.html(s, open) : ''}
@@ -556,7 +567,9 @@ function fillForm(values) {
     el.value = v === true ? '1' : v === false ? '0' : v == null ? '' : v;
   }
 }
-const fieldLabel = (name) => form.elements.namedItem(name).closest('label').querySelector('span').textContent;
+const fieldLabel = (name) => ({ chatgpt_approved: 'ChatGPT approval', chatgpt_approved_at: 'Approved at',
+  chatgpt_approval_ref: 'Review link', chatgpt_approval_sha: 'Reviewed commit' }[name] ||
+  form.elements.namedItem(name).closest('label').querySelector('span').textContent);
 
 function openEditor(site) {
   editing = site ? site.id : null;

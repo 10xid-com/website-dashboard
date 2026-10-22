@@ -302,6 +302,59 @@ export const MIGRATIONS = [
     )`,
     'CREATE INDEX service_passwords_site ON service_passwords (site_id)',
   ],
+  // 7. Review readiness is separate from production deployment. Existing
+  // sites start unreviewed. The exact reviewed revision is kept for handoff.
+  [
+    `ALTER TABLE sites
+      ADD COLUMN chatgpt_approved SMALLINT CHECK (chatgpt_approved IN (0,1)),
+      ADD COLUMN chatgpt_approved_at TEXT,
+      ADD COLUMN chatgpt_approval_ref TEXT,
+      ADD COLUMN chatgpt_approval_sha TEXT,
+      ADD CONSTRAINT sites_chatgpt_review_check CHECK (
+        chatgpt_approved IS DISTINCT FROM 1 OR (
+          chatgpt_approved_at IS NOT NULL AND
+          chatgpt_approval_ref ~ '^https://github[.]com/[^/]+/[^/]+/(pull/[0-9]+|commit/[a-fA-F0-9]{40,64})/{0,1}$' AND
+          chatgpt_approval_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$' AND
+          chatgpt_approval_ref IS NOT NULL AND chatgpt_approval_sha IS NOT NULL
+        ))`,
+    `CREATE FUNCTION desk_review_status() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP = 'UPDATE' AND OLD.chatgpt_approved = 1 AND (
+        NEW.github_repo IS DISTINCT FROM OLD.github_repo OR
+        NEW.live_domain IS DISTINCT FROM OLD.live_domain OR
+        NEW.staging_domain IS DISTINCT FROM OLD.staging_domain OR
+        NEW.needs_seo_ppc IS DISTINCT FROM OLD.needs_seo_ppc OR
+        NEW.astro_staging IS DISTINCT FROM OLD.astro_staging
+      ) THEN NEW.chatgpt_approved := 0; END IF;
+      IF NEW.chatgpt_approved = 1 THEN
+        IF TG_OP = 'INSERT' OR OLD.chatgpt_approved IS DISTINCT FROM 1 OR
+           NEW.chatgpt_approval_sha IS DISTINCT FROM OLD.chatgpt_approval_sha OR
+           NEW.chatgpt_approval_ref IS DISTINCT FROM OLD.chatgpt_approval_ref THEN
+          NEW.chatgpt_approved_at := ${NOW};
+        ELSE NEW.chatgpt_approved_at := OLD.chatgpt_approved_at; END IF;
+      ELSE
+        NEW.chatgpt_approved_at := NULL;
+        NEW.chatgpt_approval_ref := NULL;
+        NEW.chatgpt_approval_sha := NULL;
+      END IF;
+      RETURN NEW;
+    END $$`,
+    `CREATE TRIGGER sites_review_status BEFORE INSERT OR UPDATE ON sites
+      FOR EACH ROW EXECUTE FUNCTION desk_review_status()`,
+    `CREATE FUNCTION desk_job_review_reset() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF TG_OP = 'UPDATE' AND
+         (to_jsonb(NEW) - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(OLD) - 'updated_at') THEN
+        RETURN NULL;
+      END IF;
+      UPDATE sites SET chatgpt_approved = 0, updated_at = ${NOW}
+        WHERE id = CASE WHEN TG_OP = 'DELETE' THEN OLD.site_id ELSE NEW.site_id END
+          AND chatgpt_approved = 1;
+      RETURN NULL;
+    END $$`,
+    `CREATE TRIGGER site_jobs_review_reset AFTER INSERT OR UPDATE OR DELETE ON site_jobs
+      FOR EACH ROW EXECUTE FUNCTION desk_job_review_reset()`,
+  ],
 ];
 
 // Brings the database up to the last step (or to `upTo`, for a test that

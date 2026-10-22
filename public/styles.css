@@ -238,6 +238,9 @@ h2{font-family:"Bricolage Grotesque","Instrument Sans",sans-serif;
   color:var(--muted);border:1px solid var(--line-firm)}
 .flag::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 6px}
 .f-ok{color:var(--ok);background:var(--ok-bg);border-color:transparent}
+.f-approved{color:var(--ok);background:var(--ok-bg);border-color:currentColor}
+.review-ready{border-left:3px solid var(--ok);padding-left:14px;min-width:0}
+.review-ready>p:not(.sect){margin:8px 0 12px;color:var(--muted);font-size:13px}
 .f-ours{color:var(--wp);background:var(--wp-bg);border-color:transparent}
 .f-todo{color:var(--open);background:var(--open-bg);border-color:transparent}
 .f-no{color:var(--muted)}

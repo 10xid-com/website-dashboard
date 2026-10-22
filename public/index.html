@@ -160,6 +160,24 @@
   </form>
 </dialog>
 
+<!-- Approve a site after ChatGPT review: the reviewed pull request or
+     commit, and its full SHA. -->
+<dialog class="editor" id="approve" aria-labelledby="ap-title">
+  <form id="apform" novalidate>
+    <h3 id="ap-title">Approve</h3>
+    <p class="dthint">Approval covers the reviewed commit only. It is taken back by itself if the repo, the domains or the job list change.</p>
+    <label class="field"><span>Review link</span>
+      <input name="ref" placeholder="github.com/owner/repo/pull/12" autocomplete="off" spellcheck="false" inputmode="url"></label>
+    <label class="field"><span>Reviewed commit</span>
+      <input name="sha" placeholder="The full 40-character SHA" maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+    <p class="ederr" id="aperr" role="alert" hidden></p>
+    <div class="edbtns">
+      <button class="btn" type="button" id="ap-cancel">Cancel</button>
+      <button class="btn open" type="submit" id="ap-save">Approve</button>
+    </div>
+  </form>
+</dialog>
+
 <!-- Add or edit a service, contact or domain. The fields are drawn by
      details.js for the kind being edited. -->
 <dialog class="editor" id="dt-editor" aria-labelledby="dt-title">

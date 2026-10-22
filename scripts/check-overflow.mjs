@@ -1061,6 +1061,20 @@ function statesFor(base, sites, detailsTarget) {
     await settle(p);
   }]);
   S.push(['add dialog', async (p) => { await gotoDesk(p, base, true); await p.click('#add'); await settle(p); }]);
+  // Refused by the Worker (not a GitHub link), so it writes nothing.
+  const waiting = sites.find((s) => !s.chatgpt_approved);
+  if (waiting) {
+    S.push(['approve dialog: an error', async (p) => {
+      await gotoDesk(p, base, true);
+      const card = p.locator(`.site[data-id="${waiting.id}"]`);
+      await card.locator('.nm').click();
+      await card.locator('[data-review="approve"]').click();
+      await p.fill('#apform [name=ref]', 'https://gitlab.example.com/' + 'a-very-long-group-name/'.repeat(8) + 'merge_requests/123456');
+      await p.fill('#apform [name=sha]', 'f'.repeat(64));
+      await p.click('#ap-save');
+      await p.waitForSelector('#aperr:not([hidden])');
+    }]);
+  }
   if (siteNames.length) {
     const target = siteNames.includes(LONGEST) ? LONGEST : siteNames[0];
     S.push(['edit dialog', async (p) => {
@@ -1152,7 +1166,14 @@ try {
     base = worker.base;
     for (const s of STRESS) {
       const { site } = await api(base, 'POST', '/api/sites', s);
-      if (s.name === LONGEST) await seedDetails(base, site.id);
+      if (s.name === LONGEST) {
+        await seedDetails(base, site.id);
+        // Approved after ChatGPT review: the longest link and SHA the desk takes.
+        await api(base, 'PATCH', '/api/sites/' + site.id, {
+          chatgpt_approved: true, chatgpt_approval_sha: 'f'.repeat(64),
+          chatgpt_approval_ref: `https://github.com/${s.github_repo}/commit/${'f'.repeat(64)}`,
+        });
+      }
     }
     await api(base, 'POST', '/api/client-form', FORM_CLIENT);
   }

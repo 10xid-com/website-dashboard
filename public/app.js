@@ -265,12 +265,7 @@ function cardHtml(s, open) {
       <p class="sect">Where it stands</p>
       <div class="ctrls">${ctrls}</div>
     </div>
-    ${s.chatgpt_approved === true ? `<div class="review-ready"><p class="sect">Ready for your deployment</p>
-      <p>ChatGPT approved ${esc(when(s.chatgpt_approved_at))}. Deploy the reviewed commit below.</p>
-      <dl class="addr">
-        ${addrRow('Review', s.chatgpt_approval_ref, s.chatgpt_approval_ref, s.name)}
-        ${textRow('Commit', s.chatgpt_approval_sha)}
-      </dl></div>` : ''}
+    ${reviewRowHtml(s)}
     ${rdRowHtml(s)}
     ${glRowHtml(s)}
     ${s.notes ? `<div><p class="sect">Notes</p><p class="notes">${esc(s.notes)}</p></div>` : ''}
@@ -677,6 +672,128 @@ form.addEventListener('submit', async (e) => {
   }
 });
 $('ed-cancel').addEventListener('click', () => editor.close());
+
+// ---- ChatGPT review ----
+// Approval names the exact revision that was reviewed: a GitHub pull request
+// or commit link, and the full commit SHA. The Worker refuses one without the
+// other, and the database stamps when it was given and takes it back by
+// itself if the repo, the domains or the job list change (schema step 7).
+function reviewRowHtml(s) {
+  const btn = (act, word, cls = '') =>
+    `<button class="btn${cls}" type="button" data-review="${act}">${word}<span class="sr"> ${esc(s.name)}</span></button>`;
+  if (s.chatgpt_approved === true) {
+    return `<div class="review-ready"><p class="sect">Ready for your deployment</p>
+      <p>ChatGPT approved ${esc(when(s.chatgpt_approved_at))}. Deploy the reviewed commit below.</p>
+      <dl class="addr">
+        ${addrRow('Review', s.chatgpt_approval_ref, s.chatgpt_approval_ref, s.name)}
+        ${textRow('Commit', s.chatgpt_approval_sha)}
+      </dl>
+      <div class="btns glbtns">${btn('revoke', 'Revoke approval', ' danger')}</div></div>`;
+  }
+  return `<div class="review-ready review-wait"><p class="sect">ChatGPT review</p>
+      <p>Awaiting ChatGPT review. Once the reviewed commit passes, approve it here.</p>
+      <div class="btns glbtns">${btn('approve', 'Approve…', ' open')}</div></div>`;
+}
+
+const approver = $('approve');
+const apForm = $('apform');
+let approving = null;   // the id being approved
+
+function openApprove(id) {
+  approving = id;
+  $('ap-title').textContent = 'Approve ' + byId(id).name;
+  apForm.reset();
+  $('aperr').hidden = true;
+  apForm.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+  approver.showModal();
+  apForm.elements.namedItem('ref').focus();
+}
+
+// A commit link carries its own SHA, so pasting one fills the commit in.
+apForm.elements.namedItem('ref').addEventListener('input', (e) => {
+  const sha = apForm.elements.namedItem('sha');
+  const m = /\/commit\/([a-f0-9]{40,64})\b/i.exec(e.target.value);
+  if (m && !sha.value.trim()) sha.value = m[1].toLowerCase();
+});
+
+apForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = $('aperr');
+  const s = byId(approving);
+  if (!s) { approver.close(); return; }
+  apForm.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+  const refEl = apForm.elements.namedItem('ref');
+  const shaEl = apForm.elements.namedItem('sha');
+  let ref = refEl.value.trim();
+  if (ref && !/^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) ref = 'https://' + ref;
+  const sha = shaEl.value.trim().toLowerCase();
+  const missing = !ref ? refEl : !sha ? shaEl : null;
+  if (missing) {
+    err.textContent = !ref ? 'Paste the GitHub pull request or commit that was reviewed.' : 'Add the full SHA of the reviewed commit.';
+    err.hidden = false;
+    missing.setAttribute('aria-invalid', 'true');
+    missing.focus();
+    return;
+  }
+  const save = $('ap-save');
+  save.disabled = true;
+  try {
+    const { site } = await api('PATCH', '/api/sites/' + encodeURIComponent(s.id), {
+      chatgpt_approved: true, chatgpt_approval_ref: ref, chatgpt_approval_sha: sha, expected_updated_at: s.updated_at,
+    });
+    reviewApply(site);
+    approver.close();
+    say(grid.querySelector(`.site[data-id="${CSS.escape(site.id)}"]`), 'Approved');
+  } catch (ex) {
+    if (ex instanceof Locked) { approver.close(); lock(ex); return; }
+    if (ex.code === 'conflict' && ex.site) {
+      reviewApply(ex.site);
+      err.textContent = 'Someone else changed this site while you had this open. Check it, then approve again.';
+    } else {
+      err.textContent = ex.message;
+      const bad = { chatgpt_approval_ref: refEl, chatgpt_approval_sha: shaEl }[ex.field];
+      if (bad) { bad.setAttribute('aria-invalid', 'true'); bad.focus(); }
+    }
+    err.hidden = false;
+  } finally {
+    save.disabled = false;
+  }
+});
+$('ap-cancel').addEventListener('click', () => approver.close());
+approver.addEventListener('click', (e) => { if (e.target === approver) approver.close(); });
+
+// The row as the Worker now has it, keeping what the answer does not carry.
+function reviewApply(site) {
+  const i = sites.findIndex((x) => x.id === site.id);
+  if (i === -1) return;
+  for (const k of ['golive', 'readiness']) if (!(k in site)) site[k] = sites[i][k];
+  sites[i] = site;
+  redrawCard(site.id);
+}
+
+// Revoke: two taps, like Delete.
+async function revoke(btn, id) {
+  if (!btn.hasAttribute('data-armed')) {
+    btn.setAttribute('data-armed', '');
+    btn.textContent = 'Tap again to revoke';
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => { btn.removeAttribute('data-armed'); btn.textContent = 'Revoke approval'; }, 4000);
+    return;
+  }
+  clearTimeout(btn._t);
+  btn.disabled = true;
+  const s = byId(id);
+  try {
+    const { site } = await api('PATCH', '/api/sites/' + encodeURIComponent(id), { chatgpt_approved: false, expected_updated_at: s.updated_at });
+    reviewApply(site);
+    say(grid.querySelector(`.site[data-id="${CSS.escape(id)}"]`), 'Approval revoked');
+  } catch (ex) {
+    if (ex instanceof Locked) { lock(ex); return; }
+    if (ex.site) reviewApply(ex.site);
+    say(grid.querySelector(`.site[data-id="${CSS.escape(id)}"]`),
+      ex.code === 'conflict' ? 'Not revoked: someone changed this site meanwhile. Check it and try again.' : 'Not revoked: ' + ex.message, true);
+  }
+}
 // A tap on the dimmed page outside the form closes it, as a sheet should.
 editor.addEventListener('click', (e) => { if (e.target === editor) editor.close(); });
 $('add').addEventListener('click', () => openEditor(null));
@@ -1629,6 +1746,8 @@ document.addEventListener('click', (e) => {
   const g = t.closest('[data-golive]');
   if (g) { glOpen(id, g.dataset.golive, g); return; }
   if (t.closest('[data-ready]')) { rdRun(id); return; }
+  const rv = t.closest('[data-review]');
+  if (rv) { if (rv.dataset.review === 'approve') openApprove(id); else revoke(rv, id); return; }
   const d = t.closest('.btn.del');
   if (d) { del(d, id); }
 });
@@ -1762,7 +1881,7 @@ async function load({ quiet = false } = {}) {
 // something is being typed, which a redraw would throw away, or a go-live is
 // open, which keeps its own row up to date.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && loaded && !editor.open && !glDialog.open) load({ quiet: true });
+  if (document.visibilityState === 'visible' && loaded && !editor.open && !glDialog.open && !approver.open) load({ quiet: true });
 });
 
 $('host').textContent = location.host || 'website desk';

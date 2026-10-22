@@ -387,3 +387,14 @@ curl -X POST https://<desk>/api/sites \
   -H "Authorization: Bearer $DASH_KEY" -H 'content-type: application/json' \
   -d '{"name":"Client","live_domain":"client.com","live_platform":"wordpress","astro_staging":false,"domain_ours":true,"needs_seo_ppc":true}'
 ```
+
+
+## ChatGPT review approval
+
+The nightly review routine prepares SEO/PPC landing-page and CSS changes on a branch for manual deployment. It does not merge or deploy client websites. A site's `chatgpt_approved` badge is separate from `needs_seo_ppc`, `live_platform`, job flags, and go-live state.
+
+After all checks pass, set `chatgpt_approved=1`, `chatgpt_approval_ref` to a GitHub PR/commit URL, and `chatgpt_approval_sha` to the full reviewed commit SHA in one update. The database stamps `chatgpt_approved_at` and records history. Revoke approval with `chatgpt_approved=0`. Tracked repository/domain/SEO-scope changes and job changes revoke approval automatically. Changes outside the desk must be checked against the recorded SHA before deployment; the badge approves that revision only.
+
+Migration 7 adds these fields; existing sites remain unapproved. It runs through the normal migration path on the first authenticated API request after deploying the desk. No client website is marked deployed by approval. Deploy Website Desk itself once to expose the new indicator.
+
+Validation: `npm test` and `node scripts/check-approval.mjs` (uses installed Edge on Windows, Playwright Chromium elsewhere). The UI check uses fixture API responses and does not modify live data.

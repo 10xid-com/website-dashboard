@@ -124,7 +124,7 @@ Everything from one form is saved in one transaction: all of it, or, if anything
 - **The page** is plain HTML, CSS and JS in `public/`, with no framework and no build step.
 - **Privacy**: the list sits behind a shared desk key (`DASH_KEY`). With no key set, nobody can get in: the desk refuses every request rather than showing the list openly. `public/_headers` sends `X-Robots-Tag: noindex` and a strict Content-Security-Policy. Its `frame-ancestors` lets exactly two pages show the desk inside themselves: Paolo's Control Room at `https://uid-bypaolo.10xid.com` and Ethan's at `https://uid-ethan.10xid.com`, whose Website Desk button puts this desk on their stage. Every other site is refused. Inside that frame the desk works as usual, since the login cookie is `SameSite=Strict` and both hosts are on 10xid.com. Going live does not work there, because the Cloudflare Access login will not show inside another page. Use the Control Room's **Open ↗** for that. Workers Logs drop query strings.
 - **Staying logged in** (`src/session.js`): the key is typed once. The Worker checks it and sets a login cookie in its place, and the browser stays logged in until someone presses **Log off**. The cookie is `HttpOnly`, so no script can read it, and `SameSite=Strict`. It holds a value made from the key, never the key itself. It lasts 400 days, the longest any browser allows, and every visit restarts that clock. The Worker sets it, not the page, so Safari does not clear it after seven days the way it clears `localStorage`. A browser that saved the key the old way, in `localStorage`, logs in with it once and then deletes it.
-- **Logging in from Paolo's UiD** (`src/uid-login.js`): Paolo does not type the key. See [Logging in from Paolo's UiD](#logging-in-from-paolos-uid).
+- **Logging in from a UiD** (`src/uid-login.js`): Paolo and Ethan do not type the key. See [Logging in from a UiD](#logging-in-from-a-uid).
 - **Changes need the desk's own page**: a logged-in browser sends its cookie even on requests that another `*.10xid.com` page starts. So a change sent with the cookie must also carry an `x-desk: 1` header. Only the desk's page adds it, and another site cannot add it without the Worker's permission, which the Worker never gives.
 - **HTTPS only**: the 10xid.com zone's "Always Use HTTPS" is off, and turning it on would change every client host on the zone. So this Worker enforces HTTPS itself. It sees every request (`run_worker_first: true`), redirects plain-HTTP pages to HTTPS, refuses plain-HTTP API calls, and sends HSTS for this host only.
 
@@ -174,7 +174,7 @@ The Worker `website-dashboard` runs on the Cloudflare account that holds the 10x
 - **Email:** the Worker secret `RESEND_API_KEY`, a Resend key allowed to send from brandingcentres.com, and the vars `FORM_EMAIL_FROM` and `FORM_EMAIL_REP` in `wrangler.jsonc`. To send from noreply@10xid.com instead, add 10xid.com to Resend (three new records: DKIM at `resend._domainkey`, and MX and SPF on `send.10xid.com`; the Microsoft 365 records are not touched), let it verify, give the key access to it, and change `FORM_EMAIL_FROM`. Without the key, the form saves and says its emails were not sent.
 - **Database:** the Neon connection string, pooled (the `-pooler` host), stored as a Worker secret named `DATABASE_URL`. To change it, copy the new one from the Neon console (project `website-desk`, Connect, Pooled connection) and run `npx wrangler secret put DATABASE_URL`.
 - **Going live:** five more Worker secrets, a Cloudflare API token and a Cloudflare Access application. See [Setting it up](#setting-it-up).
-- **Logging in from Paolo's UiD:** the var `UID_LOGINS` in `wrangler.jsonc`, public keys only. See [Logging in from Paolo's UiD](#logging-in-from-paolos-uid).
+- **Logging in from a UiD:** the var `UID_LOGINS` in `wrangler.jsonc`, public keys only. See [Logging in from a UiD](#logging-in-from-a-uid).
 
 To redeploy after a change, run:
 
@@ -190,17 +190,17 @@ To let someone in, share the key. To lock everyone out, rotate it by setting a n
 openssl rand -hex 24 | npx wrangler secret put DASH_KEY
 ```
 
-## Logging in from Paolo's UiD
+## Logging in from a UiD
 
-Paolo's Control Room (`https://uid-bypaolo.10xid.com`) shows this desk on its stage. Paolo has already signed in there through login.10xid.com and its authenticator, so the desk does not ask him for its key as well:
+Paolo's Control Room (`https://uid-bypaolo.10xid.com`) and Ethan's (`https://uid-ethan.10xid.com`) show this desk on their stage. Each has already signed in there through login.10xid.com and its authenticator, so the desk does not ask for its key as well:
 
-1. The **Website Desk** card on his Desks stage opens `/desk/website` on his UiD. His UiD's server (`server/desk-pass.mjs` in 10xid-com/10xid-id-preview, branch `deploy/control-room-railway`) sends the browser on to `/api/session/uid?pass=…` here.
-2. The pass names his UiD, this desk and who is signed in there. It works for one minute and only once, and it is signed with an Ed25519 private key that only his UiD's server holds: the Railway variable `WEBSITE_DESK_SIGNING_KEY` on the `control-room` service.
+1. The **Website Desk** card on the UiD's Desks stage opens `/desk/website` on that UiD. Its server (`server/desk-pass.mjs` in 10xid-com/10xid-id-preview: Paolo's in `prototypes/control-room-railway` on branch `deploy/control-room-railway`, Ethan's in `prototypes/control-room-ethan` on `main`) sends the browser on to `/api/session/uid?pass=…` here.
+2. The pass names the UiD, this desk and who is signed in there. It works for one minute and only once, and it is signed with an Ed25519 private key that only that UiD's server holds: the Railway variable `WEBSITE_DESK_SIGNING_KEY` on its service (`control-room` for Paolo, `control-room-ethan` for Ethan). Each UiD has a key of its own.
 3. The Worker checks the pass against that UiD's public key and the addresses listed beside it, in `UID_LOGINS` in `wrangler.jsonc`. It records the pass so that it cannot be used again (table `uid_passes`), sets the usual login cookie and goes on to the desk. A pass that fails any check goes on to the desk without logging in, and the key is asked for as usual. The reason is logged, never the pass: Workers Logs drop query strings.
 
-The desk key never leaves the Worker, and the UiD never holds it. `UID_LOGINS` holds only public keys, so it is a variable in `wrangler.jsonc`, not a secret. Only `paolo@tboxstudio.com`, signed in to `uid-bypaolo.10xid.com`, is let in this way. To add another UiD, add its origin with its public key and its people. To stop it, take its entry out and deploy. Changing `DASH_KEY` still logs every browser out, and the next pass logs Paolo in again.
+The desk key never leaves the Worker, and the UiD never holds it. `UID_LOGINS` holds only public keys, so it is a variable in `wrangler.jsonc`, not a secret. Only `paolo@tboxstudio.com` through `uid-bypaolo.10xid.com`, and `ethan@10xid.com` through `uid-ethan.10xid.com`, are let in this way. One UiD's pass cannot log in the other's person. To add another UiD, add its origin with its public key and its people. To stop it, take its entry out and deploy. Changing `DASH_KEY` still logs every browser out, and the next pass logs them in again.
 
-To give his UiD a new signing key, make a new pair, put the private half on Railway and the public half in `UID_LOGINS`, then deploy both. Passes signed with the old key stop working as soon as the desk has the new public half. His UiD prints the public half of the key it holds when it starts.
+To give a UiD a new signing key, make a new pair, put the private half on Railway and the public half in `UID_LOGINS`, then deploy both. Passes signed with the old key stop working as soon as the desk has the new public half. Each UiD logs the public half of the key it holds when it starts.
 
 ## Going live from the desk
 
@@ -349,7 +349,7 @@ Scripts send `Authorization: Bearer <DASH_KEY>` with every request. The page use
 | --- | --- | --- | --- |
 | POST | `/api/session` | `{ "key": "..." }` | `{ loggedIn: true }` and the login cookie, or `401 { code: "bad-key" }` |
 | DELETE | `/api/session` | – | `{ loggedIn: false }` and the cookie cleared (Log off) |
-| GET | `/api/session/uid?pass=…` | – | A pass from Paolo's UiD: 302 to `/`, with the login cookie when the pass is good ([Logging in from Paolo's UiD](#logging-in-from-paolos-uid)) |
+| GET | `/api/session/uid?pass=…` | – | A pass from a UiD: 302 to `/`, with the login cookie when the pass is good ([Logging in from a UiD](#logging-in-from-a-uid)) |
 | GET | `/api/sites` | – | `{ sites: [...] }` |
 | POST | `/api/sites` | a site (`name` required) | `201 { site }` |
 | PATCH | `/api/sites/:id` | only the fields to change, optionally `expected_updated_at` | `{ site }`, or `409 { code: "conflict", site }` if the row changed since that time |

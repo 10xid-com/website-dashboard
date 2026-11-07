@@ -28,8 +28,8 @@ DATABASE_URL=postgres://localhost/desk_dev
 # key of your own locally, never the live one. Without it, saving a password
 # is refused.
 # CREDENTIALS_KEY=
-# Logging in from a UiD without the key (README, "Logging in from Paolo's
-# UiD"). wrangler.jsonc names uid-bypaolo.10xid.com and its public key; to
+# Logging in from a UiD without the key (README, "Logging in from a UiD").
+# wrangler.jsonc names Paolo's and Ethan's UiDs and their public keys; to
 # try it locally, name a UiD of your own and its key here instead:
 # UID_LOGINS={"http://localhost:8080":{"key":"<32 bytes, base64url>","emails":["paolo@tboxstudio.com"]}}
 

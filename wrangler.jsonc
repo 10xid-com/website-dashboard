@@ -43,6 +43,10 @@
       "https://uid-bypaolo.10xid.com": {
         "key": "JiTXc0DAsfl2zBtPZG1zMqMmRrPVI0eRRPZO-wt86BM",
         "emails": ["paolo@tboxstudio.com"]
+      },
+      "https://uid-ethan.10xid.com": {
+        "key": "sv5ZFgt3RWUvD7LsQtVUCpOUcQ6nWZl5cZsqpsA0FpY",
+        "emails": ["ethan@10xid.com"]
       }
     }
   }

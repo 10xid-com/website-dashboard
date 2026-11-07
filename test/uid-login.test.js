@@ -73,12 +73,24 @@ test('UID_LOGINS is read from wrangler.jsonc or .dev.vars, and a broken entry op
   assert.equal(uidLogins({ [`${UID}/`]: entry }).size, 0);
 });
 
-test('wrangler.jsonc names Paolo\'s UiD, with a whole public key, for Paolo only', () => {
+test('wrangler.jsonc names Paolo\'s and Ethan\'s UiDs, each with a key of its own, for its own person only', () => {
   const text = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
   const config = JSON.parse(text.replace(/^\s*\/\/.*$/gm, ''));
   const live = uidLogins(config.vars.UID_LOGINS);
-  assert.deepEqual([...live.keys()], [UID]);
+  const ETHAN = 'https://uid-ethan.10xid.com';
+  assert.deepEqual([...live.keys()], [UID, ETHAN]);
   assert.deepEqual([...live.get(UID).emails], ['paolo@tboxstudio.com']);
+  assert.deepEqual([...live.get(ETHAN).emails], ['ethan@10xid.com']);
+  assert.notEqual(live.get(UID).key, live.get(ETHAN).key);
+});
+
+test('a pass from one UiD cannot log in the other UiD\'s person', async () => {
+  const ethan = keys();
+  const both = uidLogins({ [UID]: { key: paolo.pub, emails: ['paolo@tboxstudio.com'] }, 'https://uid-ethan.10xid.com': { key: ethan.pub, emails: ['ethan@10xid.com'] } });
+  const viaEthan = (over, key) => checkPass(pass({ iss: 'https://uid-ethan.10xid.com', ...over }, key), { logins: both, audience: DESK, now: NOW });
+  assert.equal((await viaEthan({ email: 'ethan@10xid.com' }, ethan.privateKey)).ok, true);
+  assert.equal((await viaEthan({ email: 'paolo@tboxstudio.com' }, ethan.privateKey)).why, 'not-allowed', 'Ethan\'s UiD cannot log Paolo in');
+  assert.equal((await viaEthan({ email: 'ethan@10xid.com' }, paolo.privateKey)).why, 'bad-signature', 'Paolo\'s key cannot sign for Ethan\'s UiD');
 });
 
 test('a pass works once, and spent passes are cleared once they would have expired', async () => {

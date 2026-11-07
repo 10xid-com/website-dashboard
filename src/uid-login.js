@@ -1,9 +1,9 @@
-// Logging in from a UiD. Paolo's Control Room (uid-bypaolo.10xid.com) shows
-// this desk on its stage. Paolo has already signed in there, through
-// login.10xid.com and its authenticator, so the desk does not ask him for its
-// key as well. His UiD's server hands his browser a pass that works once and
-// for at most two minutes, signed with a private key that only that server
-// holds. The Worker checks the pass against the UiD's public key in
+// Logging in from a UiD. Paolo's Control Room (uid-bypaolo.10xid.com) and
+// Ethan's (uid-ethan.10xid.com) show this desk on their stage. Each has
+// already signed in there, through login.10xid.com and its authenticator, so
+// the desk does not ask for its key as well. The UiD's server hands the
+// browser a pass that works once and for at most two minutes, signed with a
+// private key that only that server holds. The Worker checks the pass against the UiD's public key in
 // wrangler.jsonc (UID_LOGINS) and then sets the usual login cookie. The desk
 // key never leaves the Worker, and the UiD never holds it.
 //

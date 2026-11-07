@@ -1,0 +1,31 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // The forms Worker for the client sites (README, "Client site forms"). A
+  // Worker of its own, apart from the desk: it is public, and it holds no
+  // desk secret and no desk data.
+  "name": "client-forms",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-24",
+  // client.js is the script the sites load. It is served as text, never run
+  // in the Worker.
+  "rules": [{ "type": "Text", "globs": ["**/client.js"], "fallthrough": false }],
+  "routes": [{ "pattern": "forms.10xid.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [
+    { "binding": "DB", "database_name": "client-forms", "database_id": "3e92c93d-1e3f-454a-8631-8df4554f7c2e" }
+  ],
+  // Per site and visitor: five forms a minute is more than a person sends.
+  "ratelimits": [
+    { "name": "LIMITER", "namespace_id": "4101", "simple": { "limit": 5, "period": 60 } }
+  ],
+  // Not secrets. The secrets are RESEND_API_KEY and one TURNSTILE_SECRET_<SITE>
+  // per site (src/sites.js).
+  "vars": {
+    // The shared sending domain. Never a client's own domain.
+    "FROM_ADDRESS": "noreply@brandingcentres.com",
+    // Where a form sent from a staging copy goes, instead of the client.
+    "STAGING_TO": "paolo@tboxstudio.com"
+  },
+  "observability": { "enabled": true, "redact_query_string": true }
+}

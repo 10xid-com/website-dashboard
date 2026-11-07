@@ -310,6 +310,42 @@ npx wrangler secret put GOLIVE_EMAILS         # who may go live: emails, separat
 
 `wrangler dev` has no Access in front, so locally the go-live endpoints answer `access-not-protecting` (or `golive-not-set-up` without the five settings in `.dev.vars`). `npm test` covers going live against fakes.
 
+## Client site forms
+
+A separate Worker, `client-forms` at **https://forms.10xid.com**, in `forms/`. It sends the enquiry forms of the client sites that are static copies of a WordPress site. Their forms are the WordPress forms copied as markup (Elementor, Divi, eForm), and they still post to WordPress, so on the new site they would send nothing. It shares nothing with the desk: no desk secret, no desk data.
+
+Each site loads one script in its layout:
+
+```html
+<script is:inline src="https://forms.10xid.com/embed.js?site=aerospot" defer></script>
+```
+
+The script (`forms/src/client.js`) hides the copied reCAPTCHA and puts a Turnstile check on each enquiry form. On submit it stops the copied WordPress script, checks the required fields, and sends each question with its answer to `POST /submit/<site>`. Search, log-in and cart forms are left alone. In the browser console, `__tenxForms.fields(document.forms[0])` shows what a form would send.
+
+The Worker (`forms/src/handler.js`) accepts a form only from that site's own hostnames, with a Turnstile token issued on the same hostname. It allows five a minute per visitor. It saves the form to the `client-forms` D1 database, then emails it through Resend:
+
+| | |
+| --- | --- |
+| From | `<Site name> website <noreply@brandingcentres.com>`: the shared sending domain, never the client's own |
+| Reply-To | the visitor, so the client's reply reaches them |
+| To | from the live hostnames, the client's address in `forms/src/sites.js`; from staging, `STAGING_TO`, with `[Staging]` in the subject |
+
+**Adding a site:** create a Turnstile widget for its live and staging hostnames (Cloudflare → Turnstile). Add the site to `forms/src/sites.js` with the widget's sitekey, then add its secret and deploy:
+
+```sh
+npx wrangler secret put TURNSTILE_SECRET_<KEY> -c forms/wrangler.jsonc
+npx wrangler deploy -c forms/wrangler.jsonc
+```
+
+Then add the script tag to the site's layout. The Worker's other secret is `RESEND_API_KEY`, a send-only key for brandingcentres.com. `npm test` covers the Worker against a fake Turnstile, Resend and D1. Turnstile does not pass an automated browser, so one real submission by a person proves each site end to end.
+
+To see what was sent:
+
+```sh
+npx wrangler d1 execute client-forms --remote -c forms/wrangler.jsonc \
+  --command "SELECT id, site, form, live, email, delivery, created_at FROM submissions ORDER BY id DESC LIMIT 20"
+```
+
 ## Backups and undo
 
 **Undoing one change:** the `history` table has the value every field held before each change, and every row that was removed. Look it up on the site's History, or in the Neon console's SQL editor:

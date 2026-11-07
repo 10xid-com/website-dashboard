@@ -28,6 +28,11 @@ DATABASE_URL=postgres://localhost/desk_dev
 # key of your own locally, never the live one. Without it, saving a password
 # is refused.
 # CREDENTIALS_KEY=
+# Logging in from a UiD without the key (README, "Logging in from Paolo's
+# UiD"). wrangler.jsonc names uid-bypaolo.10xid.com and its public key; to
+# try it locally, name a UiD of your own and its key here instead:
+# UID_LOGINS={"http://localhost:8080":{"key":"<32 bytes, base64url>","emails":["paolo@tboxstudio.com"]}}
+
 # The client form's emails go through Resend. Without a key the form still
 # saves, and says the emails were not sent.
 # RESEND_API_KEY=

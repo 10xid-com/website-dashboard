@@ -303,6 +303,19 @@ export class Store {
   // it was done before. Rows keep their times and log numbers, and make no
   // history: they are not changes. Each site gets the next number, in the
   // order the sites were made, and its go-live record follows it.
+  // A UiD's login pass works once (uid-login.js). → true the first time this
+  // nonce is used, false after that. Passes that have expired are cleared
+  // out on the way, since they can no longer be used anyway.
+  usePass(nonce, iss, expiresAt) {
+    return this.#write(async (tx) => {
+      await tx.run('DELETE FROM uid_passes WHERE expires_at < ?', new Date().toISOString());
+      return !!(await tx.row(
+        'INSERT INTO uid_passes (nonce, iss, expires_at) VALUES (?, ?, ?) ON CONFLICT (nonce) DO NOTHING RETURNING nonce',
+        nonce, iss, expiresAt,
+      ));
+    });
+  }
+
   hasImported() {
     return this.#read(async (tx) => !!(await tx.row("SELECT value FROM desk_meta WHERE key = 'imported_from_do'")));
   }

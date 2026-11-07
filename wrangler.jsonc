@@ -31,8 +31,19 @@
   // rep that Notify rep writes to. Not secrets. The Resend key and the key
   // passwords are encrypted with are secrets: RESEND_API_KEY and
   // CREDENTIALS_KEY (README).
+  //
+  // UID_LOGINS: the UiDs that log a browser in to the desk without the key,
+  // each with its public key and who it may log in (src/uid-login.js). Only
+  // a public key, so not a secret: the private key that signs the passes is
+  // the WEBSITE_DESK_SIGNING_KEY variable on that UiD's own service.
   "vars": {
     "FORM_EMAIL_FROM": "10XiD <noreply@brandingcentres.com>",
-    "FORM_EMAIL_REP": "paolo@tboxstudio.com"
+    "FORM_EMAIL_REP": "paolo@tboxstudio.com",
+    "UID_LOGINS": {
+      "https://uid-bypaolo.10xid.com": {
+        "key": "JiTXc0DAsfl2zBtPZG1zMqMmRrPVI0eRRPZO-wt86BM",
+        "emails": ["paolo@tboxstudio.com"]
+      }
+    }
   }
 }

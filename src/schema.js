@@ -380,6 +380,17 @@ export const MIGRATIONS = [
       updated_at   TEXT NOT NULL
     )`,
   ],
+
+  // 9. Logging in from a UiD (uid-login.js). Each pass's nonce is kept until
+  // the pass would have expired anyway, so a pass works only once. It is not
+  // a change to the list, so it has no history trigger.
+  [
+    `CREATE TABLE uid_passes (
+      nonce      TEXT PRIMARY KEY,
+      iss        TEXT NOT NULL,     -- the UiD that signed it
+      expires_at TEXT NOT NULL
+    )`,
+  ],
 ];
 
 // Brings the database up to the last step (or to `upTo`, for a test that

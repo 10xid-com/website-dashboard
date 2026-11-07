@@ -18,7 +18,8 @@ import { cleanClientForm, OPTIONS, LIMITS } from './client-form.js';
 import { cleanPassword, encryptPassword, decryptPassword, SecretsNotSetUp } from './secrets.js';
 import { formEmails, sendEmails, DEFAULT_FROM, DEFAULT_REP } from './notify.js';
 import { sessionToken, cookieValues, sessionCookie, clearCookie } from './session.js';
-import { json } from './answers.js';
+import { json, redirect } from './answers.js';
+import { uidLogins, checkPass } from './uid-login.js';
 import { pgSession } from './db.js';
 import { migrate } from './schema.js';
 import { Store } from './store.js';
@@ -131,12 +132,45 @@ async function handleSession(request, env, secure) {
   return res;
 }
 
+// GET /api/session/uid?pass=…: a browser sent here by a UiD's Website Desk
+// button (uid-login.js). A good pass logs this browser in, as the key does,
+// and goes on to the desk. Anything else goes on to the desk without logging
+// in, and the desk asks for the key as usual. The logs drop query strings,
+// so the pass is never kept there.
+async function handleUidLogin(request, env, url, ctx) {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed.' }, 405);
+  const refused = (why) => {
+    console.log(JSON.stringify({ message: 'A login from a UiD was refused.', why }));
+    return redirect('/');
+  };
+  if (!env.DASH_KEY) return refused('no-key-configured');
+  if (!env.DATABASE_URL) return refused('no-database');
+  const pass = await checkPass(url.searchParams.get('pass'), { logins: uidLogins(env.UID_LOGINS), audience: url.origin });
+  if (!pass.ok) return refused(pass.why);
+  const session = pgSession(env.DATABASE_URL);
+  try {
+    await ready(env, session.connect);
+    const first = await new Store(session.connect).usePass(pass.nonce, pass.iss, new Date(pass.exp).toISOString());
+    if (!first) return refused('used');
+  } catch (e) {
+    console.error(JSON.stringify({ message: 'The database is not ready.', error: String(e?.message || e) }));
+    return refused('database-unavailable');
+  } finally {
+    ctx.waitUntil(session.close());
+  }
+  console.log(JSON.stringify({ message: 'Logged in from a UiD.', uid: pass.iss, email: pass.email }));
+  const res = redirect('/');
+  res.headers.append('set-cookie', sessionCookie(await sessionToken(env.DASH_KEY), url.protocol === 'https:'));
+  return res;
+}
+
 const notFound = () => json({ error: 'No site with that id.' }, 404);
 
 async function handleApi(request, env, url, ctx) {
   const secure = url.protocol === 'https:';
   const parts = url.pathname.replace(/\/+$/, '').split('/'); // ['', 'api', 'sites', id?]
   if (parts[2] === 'session' && parts.length === 3) return handleSession(request, env, secure);
+  if (parts[2] === 'session' && parts[3] === 'uid' && parts.length === 4) return handleUidLogin(request, env, url, ctx);
   // Where Cloudflare Access sends a person back after its login. It arrives
   // from Access's own site, so the SameSite=Strict login cookie is not sent
   // with it and the key cannot be checked here. It changes nothing and shows
